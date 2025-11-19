@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RideShare (PostgreSQL) — Phase 1</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="toolbar">
+      <div class="container">
+        <div class="title">
+          <h1>RideShare DB App</h1>
+          <span class="badge">PostgreSQL</span>
+        </div>
+        <div class="group" style="margin-top: 10px">
+          <button class="btn btn-primary" id="createTables">
+            Create Tables
+          </button>
+          <button class="btn btn-danger" id="deleteAllData">Delete All Data</button>
+          <button class="btn" id="initLookups">Init Lookups</button>
+          <button class="btn" id="frontDesk">Front Desk Demo</button>
+          <button class="btn" id="simulate">Simulation (100 rides)</button>
+          <button class="btn btn-ghost" id="clearLog">Clear Log</button>
+        </div>
+        <div class="group">
+          <button class="btn" id="browseUsers">Browse app_user</button>
+          <button class="btn" id="browseDrivers">Browse driver</button>
+          <button class="btn" id="browseVehicles">Browse vehicle</button>
+          <button class="btn" id="browseRides">Browse ride</button>
+          <button class="btn" id="browsePayments">Browse payment</button>
+          <button class="btn" id="browseAccounts">Browse bank_account</button>
+          <button class="btn" id="browseCommission">
+            Browse company_commission
+          </button>
+        </div>
+        <div class="group">
+          <button class="btn" id="report1">Report 1</button>
+          <button class="btn" id="report2">Report 2</button>
+          <button class="btn" id="report3">Report 3</button>
+        </div>
+      </div>
+    </div>
+
+    <main class="container">
+      <p class="subtitle">
+        Use the controls above to create tables, seed lookup data, run a
+        transactional front-desk booking, simulate load, and inspect reports.
+        Press <span class="kbd">Clear Log</span> to reset output.
+      </p>
+
+      <div class="grid">
+        <section class="card col-4">
+          <h3 class="section-title">SQL / Diagnostics Log</h3>
+          <textarea
+            id="log"
+            placeholder="Actions and errors appear here"
+          ></textarea>
+        </section>
+
+        <section class="card col-8">
+          <h3 class="section-title">Table Preview</h3>
+          <div id="table" class="table-wrap"></div>
+          <div class="footer-note">
+            Tip: Headers stick while you scroll. Wide tables scroll
+            horizontally.
+          </div>
+        </section>
+
+        <section class="card col-6">
+          <h3 class="section-title">Report Output</h3>
+          <div id="report" class="table-wrap"></div>
+        </section>
+
+        <section class="card col-6">
+          <h3 class="section-title">Result</h3>
+          <div id="result"></div>
+        </section>
+      </div>
+    </main>
+
+    <script src="script.js"></script>
+  </body>
+</html>
