@@ -439,7 +439,7 @@ app.post("/simulate", async (req, res) => {
       const start = faker.location.city();
       const end = faker.location.city();
       try {
-        await bookAndPay({
+        const result = await bookAndPay({ //captures returned ride_id
           user_id: u,
           driver_id: d,
           vehicle_id: v.vehicle_id,
@@ -450,6 +450,15 @@ app.post("/simulate", async (req, res) => {
           method: "Card",
         });
         success++;
+        if (Math.random() > 0.2) {
+          const rating = Math.floor(Math.random() * 2) + 4; // 4-5 stars
+          await client.query(
+            `INSERT INTO recent_reviews(ride_id, user_id, driver_id, rating) 
+             VALUES ($1, $2, $3, $4)`,
+            [result.ride_id, u, d, rating]
+          );
+        }
+
       } catch (e) {
         failed++;
       }
@@ -479,6 +488,21 @@ app.post("/frontdesk/book", async (req, res) => {
             method: "Card",
           };
     const result = await bookAndPay(payload);
+
+    const client = await pool.connect();
+    try {
+      await client.query(
+        `INSERT INTO recent_reviews(ride_id, user_id, driver_id, rating) 
+         VALUES ($1, $2, $3, $4)`,
+        [result.ride_id, payload.user_id, payload.driver_id, 5]
+      );
+    } catch (reviewError) {
+      // Review creation failed, but ride succeeded - log but don't fail the request
+      console.log('Review creation failed:', reviewError.message);
+    } finally {
+      client.release();
+    }
+
     const executionTime = Date.now() - startTime;
     res.json({ ok: true, result, executionTime });
   } catch (e) {
