@@ -151,6 +151,7 @@ document.getElementById("browseAccounts").onclick = () =>
   browse("bank_account");
 document.getElementById("browseCommission").onclick = () =>
   browse("company_commission");
+document.getElementById("browseReviews").onclick = () => browse("recent_reviews");
 
 // Reports
 document.getElementById("report1").onclick = async () => {

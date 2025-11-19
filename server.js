@@ -27,6 +27,7 @@ async function runSQL(sql, params = []) {
 
 // DDL: create tables (idempotent: drops then creates)
 const ddl = `
+DROP TABLE IF EXISTS recent_reviews;
 DROP TABLE IF EXISTS company_commission;
 DROP TABLE IF EXISTS ride;
 DROP TABLE IF EXISTS payment;
@@ -114,6 +115,18 @@ CREATE TABLE company_commission (
   commission_amt NUMERIC(12,2) NOT NULL CHECK (commission_amt >= 0),
   PRIMARY KEY (ride_id, driver_id)
 );
+
+CREATE TABLE recent_reviews(
+  ride_id INT NOT NULL REFERENCES ride(ride_id) ON DELETE CASCADE,
+  user_id INT NOT NULL REFERENCES app_user(user_id) ON DELETE CASCADE,
+  driver_id INT NOT NULL REFERENCES driver(driver_id) ON DELETE CASCADE,
+  rating INT CHECK (rating BETWEEN 1 AND 5),
+  feedback_date TIMESTAMP NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (ride_id, user_id)
+);
+
+CREATE INDEX reviews_driver_idx ON recent_reviews(driver_id);
+CREATE INDEX reviews_date_idx ON recent_reviews(feedback_date);
 `;
 
 // Seed lookup data: >= 10 rows for categories, and create default accounts
@@ -479,6 +492,7 @@ app.post("/delete-all-data", async (req, res) => {
     await client.query("BEGIN");
     
     // Delete in order (respecting foreign key constraints)
+    await client.query("DELETE FROM recent_reviews");
     await client.query("DELETE FROM company_commission");
     await client.query("DELETE FROM ride");
     await client.query("DELETE FROM payment");
