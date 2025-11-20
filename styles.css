@@ -26,6 +26,31 @@ body {
   background: linear-gradient(180deg, #f8fafc 0%, #f6f7fb 100%);
 }
 
+.video-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background-color: var(--accent-weak);
+  color: var(--text);
+  border: 1px solid #bfdbfe;
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-decoration: none;
+  transition: background-color 0.2s ease, color 0.2s ease, transform 0.06s ease;
+}
+
+.video-link:hover {
+  background-color: var(--accent);
+  color: white;
+  transform: translateY(-1px);
+}
+
+.video-link:active {
+  transform: translateY(0);
+}
+
 .container {
   max-width: 1200px;
   margin: 0 auto;
