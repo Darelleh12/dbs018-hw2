@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>RideShare (PostgreSQL) — Phase 1</title>
+    <title>RideShare (PostgreSQL) — Final</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -17,27 +17,41 @@
           <button class="btn btn-primary" id="createTables">
             Create Tables
           </button>
-          <button class="btn btn-danger" id="deleteAllData">Delete All Data</button>
+          <button class="btn btn-danger" id="deleteAllData">
+            Delete All Data
+          </button>
           <button class="btn" id="initLookups">Init Lookups</button>
+          <button class="btn" id="customRide">Custom Ride</button>
           <button class="btn" id="frontDesk">Front Desk Demo</button>
           <button class="btn" id="simulate">Simulation (100 rides)</button>
           <button class="btn btn-ghost" id="clearLog">Clear Log</button>
         </div>
         <div class="group">
-          <button class="btn" id="browseUsers">Browse app_user</button>
-          <button class="btn" id="browseDrivers">Browse driver</button>
-          <button class="btn" id="browseVehicles">Browse vehicle</button>
-          <button class="btn" id="browseRides">Browse ride</button>
-          <button class="btn" id="browsePayments">Browse payment</button>
-          <button class="btn" id="browseAccounts">Browse bank_account</button>
+          <button class="btn" id="browseUsers">Browse App_user</button>
+          <button class="btn" id="browseDrivers">Browse Driver</button>
+          <button class="btn" id="browseVehicles">Browse Vehicle</button>
+          <button class="btn" id="browseRides">Browse Ride</button>
+          <button class="btn" id="browsePayments">Browse Payment</button>
+          <button class="btn" id="browseAccounts">Browse USER Accounts</button>
+          <button class="btn" id="browseDriverAccounts">
+            Browse DRIVER Accounts
+          </button>
+          <button class="btn" id="browseCompanyAccount">
+            Browse COMPANY Account
+          </button>
           <button class="btn" id="browseCommission">
-            Browse company_commission
+            Browse Company_commission
+          </button>
+          <button class="btn" id="recentRides">
+            Recent Rides (Last 10 MIN)
           </button>
         </div>
         <div class="group">
           <button class="btn" id="report1">Report 1</button>
           <button class="btn" id="report2">Report 2</button>
           <button class="btn" id="report3">Report 3</button>
+          <button class="btn" id="report4">Drivers by Rating</button>
+          <button class="btn" id="payDriver">Pay Driver (back office)</button>
         </div>
       </div>
     </div>

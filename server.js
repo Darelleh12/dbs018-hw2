@@ -102,6 +102,7 @@ CREATE TABLE ride (
   tax_amount NUMERIC(12,2) CHECK (tax_amount >= 0),
   total_amount NUMERIC(12,2) CHECK (total_amount >= 0),
   status VARCHAR(20) NOT NULL DEFAULT 'BOOKED',
+  rating INT CHECK (rating BETWEEN 1 AND 5),
   payment_id INT REFERENCES payment(payment_id)
 );
 
@@ -112,6 +113,7 @@ CREATE TABLE company_commission (
   ride_id INT NOT NULL REFERENCES ride(ride_id) ON DELETE CASCADE,
   driver_id INT NOT NULL REFERENCES driver(driver_id) ON DELETE CASCADE,
   commission_amt NUMERIC(12,2) NOT NULL CHECK (commission_amt >= 0),
+  paid BOOLEAN NOT NULL DEFAULT FALSE,
   PRIMARY KEY (ride_id, driver_id)
 );
 `;
@@ -253,6 +255,7 @@ async function bookAndPay({
     const price_before_tax = base + perkm * Number(distance_km);
     const tax_amount = Number((price_before_tax * 0.08).toFixed(2));
     const total_amount = Number((price_before_tax + tax_amount).toFixed(2));
+    const commission = Number((total_amount * 0.2).toFixed(2)); // ✅ NEW
 
     // Company account id
     const { rows: comp } = await client.query(
@@ -290,7 +293,7 @@ async function bookAndPay({
     // Insert ride
     const rideRes = await client.query(
       `INSERT INTO ride(user_id, driver_id, vehicle_id, cat_id, start_zone, end_zone, distance_km, price_before_tax, tax_amount, total_amount, status, payment_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'PAID',$11) RETURNING ride_id`,
+   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'PAID',$11) RETURNING ride_id`,
       [
         user_id,
         driver_id,
@@ -308,11 +311,14 @@ async function bookAndPay({
     const ride_id = rideRes.rows[0].ride_id;
 
     // Commission 20%
-    const commission = Number((total_amount * 0.2).toFixed(2));
     await client.query(
-      `INSERT INTO company_commission(ride_id, driver_id, commission_amt) VALUES ($1,$2,$3)`,
+      `INSERT INTO company_commission(ride_id, driver_id, commission_amt, paid)
+   VALUES ($1,$2,$3,FALSE)`,
       [ride_id, driver_id, commission]
     );
+
+    // AUTO-RATE (1–5)
+    await autoRateRide(ride_id, client);
 
     await client.query("COMMIT");
     return {
@@ -371,6 +377,20 @@ const REPORT_3 = `
   ORDER BY c.name, r.start_zone;
 `;
 
+const REPORT_4 = `
+  SELECT
+    d.driver_id,
+    d.name AS driver_name,
+    d.rating AS avg_rating,
+    COUNT(r.ride_id) AS rated_rides
+  FROM driver d
+  LEFT JOIN ride r
+    ON r.driver_id = d.driver_id
+   AND r.rating IS NOT NULL
+  GROUP BY d.driver_id, d.name, d.rating
+  ORDER BY d.rating DESC NULLS LAST, d.driver_id;
+`;
+
 app.post("/create-tables", async (req, res) => {
   try {
     await runSQL(ddl);
@@ -403,50 +423,103 @@ app.get("/browse/:table", async (req, res) => {
   }
 });
 
-app.post("/simulate", async (req, res) => {
-  const n = Math.min(Number(req.body.n || 100), 1000);
-  const client = await pool.connect();
-  try {
-    const { rows: users } = await client.query(`SELECT user_id FROM app_user`);
-    const { rows: drivers } = await client.query(
-      `SELECT driver_id FROM driver`
-    );
-    const { rows: vehicles } = await client.query(
-      `SELECT vehicle_id, cat_id, driver_id FROM vehicle`
-    );
+app.get("/sql", async (req, res) => {
+  const q = req.query.q;
+  if (!q) {
+    return res
+      .status(400)
+      .json({ ok: false, error: "Missing q query parameter" });
+  }
 
-    let success = 0,
-      failed = 0;
-    for (let i = 0; i < n; i++) {
-      const u = users[i % users.length].user_id;
-      const v = vehicles[i % vehicles.length];
-      const d = v.driver_id;
-      const c = v.cat_id;
-      const km = Number((Math.random() * 15 + 1).toFixed(2));
-      const start = faker.location.city();
-      const end = faker.location.city();
-      try {
-        await bookAndPay({
-          user_id: u,
-          driver_id: d,
-          vehicle_id: v.vehicle_id,
-          cat_id: c,
-          start_zone: start,
-          end_zone: end,
-          distance_km: km,
-          method: "Card",
-        });
-        success++;
-      } catch (e) {
-        failed++;
-      }
-    }
-    res.json({ ok: true, inserted: success, failed });
+  // Tiny safety: only allow SELECT
+  const trimmed = q.trim().toLowerCase();
+  if (!trimmed.startsWith("select")) {
+    return res
+      .status(400)
+      .json({ ok: false, error: "Only SELECT statements are allowed" });
+  }
+
+  try {
+    const { rows } = await runSQL(q);
+    res.json({ ok: true, rows });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post("/simulate", async (req, res) => {
+  const n = Math.min(Number(req.body.n || 100), 1000);
+
+  const client = await pool.connect();
+  let users, vehicles;
+  try {
+    const uRes = await client.query(`SELECT user_id FROM app_user`);
+    const vRes = await client.query(
+      `SELECT vehicle_id, cat_id, driver_id FROM vehicle`
+    );
+    users = uRes.rows;
+    vehicles = vRes.rows;
+  } catch (e) {
+    client.release();
+    return res.status(500).json({ ok: false, error: e.message });
   } finally {
     client.release();
   }
+
+  if (!users.length || !vehicles.length) {
+    return res.status(400).json({
+      ok: false,
+      error: "Need users and vehicles before simulation. Click Init Lookups.",
+    });
+  }
+
+  // Build N concurrent transactions
+  const tasks = [];
+  const startTime = Date.now();
+
+  for (let i = 0; i < n; i++) {
+    const u = users[i % users.length].user_id;
+    const v = vehicles[i % vehicles.length];
+    const d = v.driver_id;
+    const c = v.cat_id;
+    const km = Number((Math.random() * 15 + 1).toFixed(2));
+    const startZone = faker.location.city();
+    const endZone = faker.location.city();
+
+    tasks.push(
+      bookAndPay({
+        user_id: u,
+        driver_id: d,
+        vehicle_id: v.vehicle_id,
+        cat_id: c,
+        start_zone: startZone,
+        end_zone: endZone,
+        distance_km: km,
+        method: "Card",
+      })
+    );
+  }
+
+  // Run them concurrently
+  const results = await Promise.allSettled(tasks);
+  const totalTimeMs = Date.now() - startTime;
+
+  let success = 0;
+  let failed = 0;
+  results.forEach((r) => {
+    if (r.status === "fulfilled") success++;
+    else failed++;
+  });
+
+  const avgTimeMs = success ? totalTimeMs / success : 0;
+
+  res.json({
+    ok: true,
+    inserted: success,
+    failed,
+    totalTimeMs,
+    avgTimeMs,
+  });
 });
 
 app.post("/frontdesk/book", async (req, res) => {
@@ -473,11 +546,75 @@ app.post("/frontdesk/book", async (req, res) => {
   }
 });
 
+app.post("/frontdesk/custom-ride", async (req, res) => {
+  const startTime = Date.now();
+  const { user_id, driver_id, start_zone, end_zone } = req.body || {};
+
+  if (!user_id || !driver_id || !start_zone || !end_zone) {
+    return res.status(400).json({
+      ok: false,
+      error:
+        "user_id, driver_id, start_zone, and end_zone are required for a custom ride",
+    });
+  }
+
+  const client = await pool.connect();
+  try {
+    // Validate user exists
+    const u = await client.query(
+      "SELECT user_id FROM app_user WHERE user_id = $1",
+      [user_id]
+    );
+    if (!u.rows.length) {
+      client.release();
+      return res.status(400).json({ ok: false, error: "User not found" });
+    }
+
+    // Find a vehicle for this driver
+    const v = await client.query(
+      "SELECT vehicle_id, cat_id FROM vehicle WHERE driver_id = $1 ORDER BY vehicle_id LIMIT 1",
+      [driver_id]
+    );
+    if (!v.rows.length) {
+      client.release();
+      return res
+        .status(400)
+        .json({ ok: false, error: "Driver not found or has no vehicle" });
+    }
+
+    const vehicle_id = v.rows[0].vehicle_id;
+    const cat_id = v.rows[0].cat_id;
+
+    // Fixed distance for simplicity (you can randomize if you want)
+    const distance_km = 12.3;
+
+    const payload = {
+      user_id: Number(user_id),
+      driver_id: Number(driver_id),
+      vehicle_id,
+      cat_id,
+      start_zone,
+      end_zone,
+      distance_km,
+      method: "Card",
+    };
+
+    client.release();
+
+    const result = await bookAndPay(payload);
+    const executionTime = Date.now() - startTime;
+    res.json({ ok: true, result, executionTime });
+  } catch (e) {
+    client.release();
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.post("/delete-all-data", async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    
+
     // Delete in order (respecting foreign key constraints)
     await client.query("DELETE FROM company_commission");
     await client.query("DELETE FROM ride");
@@ -487,16 +624,18 @@ app.post("/delete-all-data", async (req, res) => {
     await client.query("DELETE FROM driver");
     await client.query("DELETE FROM app_user");
     await client.query("DELETE FROM category");
-    
+
     //Reset auto-increment counters so IDs start from 1 again
     await client.query("ALTER SEQUENCE app_user_user_id_seq RESTART WITH 1");
     await client.query("ALTER SEQUENCE driver_driver_id_seq RESTART WITH 1");
     await client.query("ALTER SEQUENCE category_cat_id_seq RESTART WITH 1");
     await client.query("ALTER SEQUENCE vehicle_vehicle_id_seq RESTART WITH 1");
-    await client.query("ALTER SEQUENCE bank_account_acct_id_seq RESTART WITH 1");
+    await client.query(
+      "ALTER SEQUENCE bank_account_acct_id_seq RESTART WITH 1"
+    );
     await client.query("ALTER SEQUENCE payment_payment_id_seq RESTART WITH 1");
     await client.query("ALTER SEQUENCE ride_ride_id_seq RESTART WITH 1");
-    
+
     await client.query("COMMIT");
     res.json({ ok: true, message: "All data deleted successfully" });
   } catch (e) {
@@ -528,6 +667,222 @@ app.get("/report/3", async (req, res) => {
     const { rows } = await runSQL(REPORT_3);
     res.json({ ok: true, rows });
   } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+app.get("/report/4", async (req, res) => {
+  try {
+    const { rows } = await runSQL(REPORT_4);
+    res.json({ ok: true, rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get("/recent/rides", async (req, res) => {
+  // default: last 10 minutes, cap at 1440 (1 day)
+  const minutes = Math.max(1, Math.min(Number(req.query.minutes || 10), 1440));
+
+  const sql = `
+    SELECT
+      r.ride_id,
+      r.user_id,
+      r.driver_id,
+      r.start_zone,
+      r.end_zone,
+      r.total_amount,
+      r.start_ts,
+      p.payment_id,
+      p.amount AS payment_amount,
+      p.ts AS payment_ts
+    FROM ride r
+    LEFT JOIN payment p ON r.payment_id = p.payment_id
+    WHERE r.start_ts >= NOW() - $1 * INTERVAL '1 minute'
+    ORDER BY r.start_ts DESC
+    LIMIT 50;
+  `;
+
+  try {
+    const { rows } = await runSQL(sql, [minutes]);
+    res.json({ ok: true, rows, minutes });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+app.post("/ride/rate", async (req, res) => {
+  const { ride_id, rating } = req.body || {};
+
+  const numericRating = Number(rating);
+  if (!ride_id || !Number.isFinite(numericRating)) {
+    return res
+      .status(400)
+      .json({ ok: false, error: "ride_id and numeric rating are required" });
+  }
+  if (numericRating < 1 || numericRating > 5) {
+    return res
+      .status(400)
+      .json({ ok: false, error: "Rating must be between 1 and 5" });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const rideRes = await client.query(
+      "SELECT driver_id FROM ride WHERE ride_id = $1",
+      [ride_id]
+    );
+    if (!rideRes.rows.length) {
+      await client.query("ROLLBACK");
+      client.release();
+      return res.status(400).json({ ok: false, error: "Ride not found" });
+    }
+
+    const driver_id = rideRes.rows[0].driver_id;
+
+    // Store rating on the ride
+    await client.query("UPDATE ride SET rating = $2 WHERE ride_id = $1", [
+      ride_id,
+      numericRating,
+    ]);
+
+    // Recompute driver's average rating from all rated rides
+    const avgRes = await client.query(
+      "SELECT ROUND(AVG(rating)::numeric, 1) AS avg_rating FROM ride WHERE driver_id = $1 AND rating IS NOT NULL",
+      [driver_id]
+    );
+    const avgRating = avgRes.rows[0].avg_rating || 0;
+
+    await client.query("UPDATE driver SET rating = $2 WHERE driver_id = $1", [
+      driver_id,
+      avgRating,
+    ]);
+
+    await client.query("COMMIT");
+    client.release();
+
+    res.json({
+      ok: true,
+      ride_id,
+      driver_id,
+      rating: numericRating,
+      driver_rating: avgRating,
+    });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    client.release();
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+async function autoRateRide(ride_id, client) {
+  const rating = Math.floor(Math.random() * 5) + 1; // 1–5
+
+  // Get driver for this ride
+  const rideRes = await client.query(
+    "SELECT driver_id FROM ride WHERE ride_id = $1",
+    [ride_id]
+  );
+  if (!rideRes.rows.length) return; // should never happen
+
+  const driver_id = rideRes.rows[0].driver_id;
+
+  // Store rating
+  await client.query("UPDATE ride SET rating = $2 WHERE ride_id = $1", [
+    ride_id,
+    rating,
+  ]);
+
+  // Recompute driver avg
+  const avgRes = await client.query(
+    "SELECT ROUND(AVG(rating)::numeric, 1) AS avg_rating FROM ride WHERE driver_id = $1 AND rating IS NOT NULL",
+    [driver_id]
+  );
+  const avgRating = avgRes.rows[0].avg_rating || 0;
+
+  await client.query("UPDATE driver SET rating = $2 WHERE driver_id = $1", [
+    driver_id,
+    avgRating,
+  ]);
+}
+
+app.post("/backend/pay-driver", async (req, res) => {
+  const driverId = Number(req.body.driver_id);
+  if (!driverId) {
+    return res.status(400).json({ ok: false, error: "driver_id required" });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // Company account
+    const compRes = await client.query(
+      `SELECT acct_id FROM bank_account
+       WHERE owner_type = 'COMPANY'
+       ORDER BY acct_id LIMIT 1`
+    );
+    if (!compRes.rows.length) throw new Error("Company account missing");
+    const company_acct = compRes.rows[0].acct_id;
+
+    // Driver account
+    const dRes = await client.query(
+      `SELECT acct_id FROM bank_account
+       WHERE owner_type = 'DRIVER' AND owner_id = $1
+       ORDER BY acct_id LIMIT 1`,
+      [driverId]
+    );
+    if (!dRes.rows.length) throw new Error("Driver account missing");
+    const driver_acct = dRes.rows[0].acct_id;
+
+    // Sum all unpaid commission for this driver
+    const sumRes = await client.query(
+      `SELECT COALESCE(SUM(commission_amt),0) AS total
+       FROM company_commission
+       WHERE driver_id = $1 AND paid = FALSE`,
+      [driverId]
+    );
+    const total = Number(sumRes.rows[0].total);
+
+    if (total <= 0) {
+      await client.query("ROLLBACK");
+      client.release();
+      return res.json({
+        ok: true,
+        driver_id: driverId,
+        paid: 0,
+        message: "No unpaid commission",
+      });
+    }
+
+    // Move money: company -> driver
+    await client.query(
+      `UPDATE bank_account SET balance = balance - $1 WHERE acct_id = $2`,
+      [total, company_acct]
+    );
+    await client.query(
+      `UPDATE bank_account SET balance = balance + $1 WHERE acct_id = $2`,
+      [total, driver_acct]
+    );
+
+    // Mark commissions as paid
+    await client.query(
+      `UPDATE company_commission
+       SET paid = TRUE
+       WHERE driver_id = $1 AND paid = FALSE`,
+      [driverId]
+    );
+
+    await client.query("COMMIT");
+    client.release();
+
+    res.json({
+      ok: true,
+      driver_id: driverId,
+      paid: total,
+    });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    client.release();
     res.status(500).json({ ok: false, error: e.message });
   }
 });
