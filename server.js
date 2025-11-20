@@ -27,14 +27,14 @@ async function runSQL(sql, params = []) {
 
 // DDL: create tables (idempotent: drops then creates)
 const ddl = `
-DROP TABLE IF EXISTS company_commission;
-DROP TABLE IF EXISTS ride;
-DROP TABLE IF EXISTS payment;
-DROP TABLE IF EXISTS bank_account;
-DROP TABLE IF EXISTS vehicle;
-DROP TABLE IF EXISTS driver;
-DROP TABLE IF EXISTS category;
-DROP TABLE IF EXISTS app_user;
+DROP TABLE IF EXISTS company_commission CASCADE;
+DROP TABLE IF EXISTS ride CASCADE;
+DROP TABLE IF EXISTS payment CASCADE;
+DROP TABLE IF EXISTS bank_account CASCADE;
+DROP TABLE IF EXISTS vehicle CASCADE;
+DROP TABLE IF EXISTS driver CASCADE;
+DROP TABLE IF EXISTS category CASCADE;
+DROP TABLE IF EXISTS app_user CASCADE;
 
 CREATE TABLE app_user (
   user_id SERIAL PRIMARY KEY,
